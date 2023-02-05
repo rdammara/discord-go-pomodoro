@@ -1,72 +1,115 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/bwmarrin/discordgo"
+	"io/ioutil"
 	"os"
 	"time"
 )
 
-func main() {
-	// Create a new Discord session using the provided bot token.
-	dg, err := discordgo.New("Bot " + os.Getenv("MTA2NjI1MDMzODk2Njk3MDM3MQ.G9Ax7c.ZHU-8w5k3Vvp3s02TDJ5k_R_2ko3qslP-86JWM"))
+var (
+	Token     string
+	BotPrefix string
+
+	config *configStruct
+)
+
+type configStruct struct {
+	Token     string `json : "Token"`
+	BotPrefix string `json : "BotPrefix"`
+}
+
+func ReadConfig() error {
+	fmt.Println("Reading config file...")
+	file, err := os.Open("./config.json")
+
 	if err != nil {
-		fmt.Println("Error creating Discord session: ", err)
+		fmt.Println(err.Error())
+		return err
+	}
+	defer file.Close()
+
+	fileBytes, err := ioutil.ReadAll(file)
+	if err != nil {
+		fmt.Println(err.Error())
+		return err
+	}
+
+	fmt.Println(string(fileBytes))
+
+	err = json.Unmarshal(fileBytes, &config)
+
+	if err != nil {
+		fmt.Println(err.Error())
+		return err
+	}
+	Token = config.Token
+	BotPrefix = config.BotPrefix
+
+	return nil
+
+}
+
+var BotId string
+var goBot *discordgo.Session
+
+func Start() {
+	goBot, err := discordgo.New("Bot " + config.Token)
+
+	if err != nil {
+		fmt.Println(err.Error())
 		return
 	}
 
-	// Register messageCreate as a callback for the messageCreate events.
-	dg.AddHandler(messageCreate)
+	u, err := goBot.User("@me")
 
-	// Open the websocket and begin listening.
-	err = dg.Open()
 	if err != nil {
-		fmt.Println("Error opening Discord session: ", err)
+		fmt.Println(err.Error())
+		return
 	}
 
-	fmt.Println("Bot is now running.  Press CTRL-C to exit.")
-	// Simple way to keep program running until CTRL-C is pressed.
+	BotId = u.ID
 
-	//Create a new channel
-	stopChan := make(chan bool)
-	//Create a goroutine that will run the timer
+	goBot.AddHandler(messageHandler)
+
+	err = goBot.Open()
+
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+	fmt.Println("Bot is running !")
+}
+
+func messageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
+	fmt.Println("messageHandler function called")
+	if m.Author.ID == BotId {
+		return
+	}
+
+	if m.Content == BotPrefix+"start" {
+		s.ChannelMessageSend(m.ChannelID, "Starting a 25 minute Pomodoro Timer!")
+		ticker := time.NewTicker(25 * time.Minute)
+		go func() {
+			for range ticker.C {
+				s.ChannelMessageSend(m.ChannelID, "Time's up! Take a break.")
+			}
+		}()
+	}
+}
+
+func main() {
+	err := ReadConfig()
+
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+
+	Start()
 
 	<-make(chan struct{})
 	return
-}
-
-// This function will be called (due to AddHandler above) every time a new
-// message is created on any channel that the autenticated bot has access to.
-func messageCreate(s *discordgo.Session, stopChan chan bool, m *discordgo.MessageCreate) {
-	// Ignore all messages created by the bot itself
-	if m.Author.ID == s.State.User.ID {
-		return
-	}
-	// If the message is "pomodoro" start the timer
-	if m.Content == "!pomodoro" {
-		s.ChannelMessageSend(m.ChannelID, "Starting 25-minutes Pomodoro timer...")
-		stopChan := make(chan bool)
-		go timer(s, stopChan, m)
-		//time.Sleep(25 * time.Minute)
-
-	}
-	//If the message is "stop", stop the timer
-	if m.Content == "!stop" {
-		s.ChannelMessageSend(m.ChannelID, "Stopping timer...")
-		stopChan <- true
-	}
-
-}
-
-// timer function
-func timer(s *discordgo.Session, stopChan chan bool, m *discordgo.MessageCreate) {
-	for {
-		select {
-		case <-stopChan:
-			s.ChannelMessageSend(m.ChannelID, "Timer stopped.")
-			return
-		case <-time.After(25 * time.Minute):
-			s.ChannelMessageSend(m.ChannelID, "Time is up! Take a break.")
-		}
-	}
 }
